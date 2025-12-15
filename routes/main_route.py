@@ -5,6 +5,7 @@ from datetime import datetime
 from models.company import Company
 from utils.utils import get_response
 from flask_restful import Api, Resource
+from datetime import datetime, timedelta
 from models.company_lid import CompanyLid
 from utils.decorators import role_required
 from flask_jwt_extended import get_jwt_identity
@@ -118,5 +119,102 @@ class MainUserResource(Resource):
         sentry_sdk.logger.info(f"{username} - Main Dashboard User successfully found")
         return get_response("Main Dashboard User successfully found", result, 200), 200
 
+class MainDailyReportResource(Resource):
+    
+    @role_required(["SUPERADMIN"])
+    def get(self):
+        """Main Daily Report Get API
+        Path - /api/main/dashboard/daily
+        Method - GET
+        ---
+        consumes: application/json
+        parameters:
+            - in: header
+              name: Authorization
+              type: string
+              required: true
+              description: Bearer token for authentication
+        responses:
+            200:
+                description: Return a Interaction Log List
+        """
+        username = get_jwt_identity()
+        sentry_sdk.logger.info(f"Main Daily Report get attempt for user: {username}")
+
+        now = datetime.utcnow()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        result = []
+
+        for hour in range(24):
+            start_time = start_of_day + timedelta(hours=hour)
+            end_time = start_time + timedelta(hours=1)
+
+            interaction_list = InteractionLog.query.filter(InteractionLog.created_at.between(start_time, end_time)).all()
+
+            result.append({
+                "time": f"{start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}",
+                "count": len(interaction_list)
+            })
+
+        sentry_sdk.logger.info(f"{username} - Interaction Log List")
+        return get_response("Interaction Log List", {"date": start_of_day.strftime("%Y-%m-%d"), "data": result}, 200), 200
+
+class MainUserDailyReportResource(Resource):
+    
+    @role_required(["ADMIN", "MANAGER", "OPERATOR"])
+    def get(self, company_id):
+        """Main User Daily Report Get API
+        Path - /api/main/dashboard/daily/user/<company_id>
+        Method - GET
+        ---
+        consumes: application/json
+        parameters:
+            - in: header
+              name: Authorization
+              type: string
+              required: true
+              description: Bearer token for authentication
+            
+            - name: company_id
+              in: path
+              type: integer
+              required: true
+              description: Enter Company ID
+        responses:
+            200:
+                description: Return a Interaction Log List
+            404:
+                description: Company not found
+        """
+        username = get_jwt_identity()
+        sentry_sdk.logger.info(f"Main User Daily Report get attempt for user: {username}")
+
+        now = datetime.utcnow()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        result = []
+
+        found_company = Company.query.filter_by(id=company_id, is_active=True).first()
+        if not found_company:
+            sentry_sdk.logger.warning(f"Main User Daily Report failed for user: {username} - Company not found")
+            return get_response("Company not found", None, 404), 404
+
+        for hour in range(24):
+            start_time = start_of_day + timedelta(hours=hour)
+            end_time = start_time + timedelta(hours=1)
+
+            interaction_list = InteractionLog.query.filter_by(company_id=found_company.id).filter(InteractionLog.created_at.between(start_time, end_time)).all()
+
+            result.append({
+                "time": f"{start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}",
+                "count": len(interaction_list)
+            })
+
+        sentry_sdk.logger.info(f"{username} - Interaction Log List")
+        return get_response("Interaction Log List", {"date": start_of_day.strftime("%Y-%m-%d"), "data": result}, 200), 200
+
 api.add_resource(MainResource, "/")
 api.add_resource(MainUserResource, "/user/<company_id>")
+api.add_resource(MainDailyReportResource, "/daily")
+api.add_resource(MainUserDailyReportResource, "/daily/user/<company_id>")
