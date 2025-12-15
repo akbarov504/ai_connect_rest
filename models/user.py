@@ -20,7 +20,7 @@ class User(db.Model):
     pic_path = db.Column(db.Text, nullable=True)
     
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime(), default=datetime.now(time_zone))
+    created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
     def __init__(self, company_id, full_name, username, phone_number, role, password, is_superadmin=False, pic_path=None):
         super().__init__()

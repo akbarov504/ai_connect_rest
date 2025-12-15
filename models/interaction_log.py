@@ -16,7 +16,7 @@ class InteractionLog(db.Model):
     message = db.Column(db.Text, nullable=False)
     ai_response = db.Column(db.Text, nullable=False)
 
-    created_at = db.Column(db.DateTime(), default=datetime.now(time_zone))
+    created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
     def __init__(self, company_id, user_instagram_id, username, interaction_type, message, ai_response):
         super().__init__()

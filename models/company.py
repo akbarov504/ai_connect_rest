@@ -20,7 +20,7 @@ class Company(db.Model):
     logo_path = db.Column(db.Text, nullable=True)
 
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime(), default=datetime.now(time_zone))
+    created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
     def __init__(self, title, description, contact_number, contact_email, address, instagram_id, instagram_token, openai_token, logo_path=None):
         super().__init__()

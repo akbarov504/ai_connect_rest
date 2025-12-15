@@ -19,7 +19,7 @@ class CompanyLid(db.Model):
     status = db.Column(db.String(50), nullable=False)
     message = db.Column(db.Text, nullable=True)
 
-    created_at = db.Column(db.DateTime(), default=datetime.now(time_zone))
+    created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
     def __init__(self, company_id, user_instagram_id, username, status):
         super().__init__()

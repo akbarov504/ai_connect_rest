@@ -14,7 +14,7 @@ class Campaign(db.Model):
     content = db.Column(db.Text, nullable=False)
 
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime(), default=datetime.now(time_zone))
+    created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
     def __init__(self, company_id, title, content):
         super().__init__()

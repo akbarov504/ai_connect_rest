@@ -14,7 +14,7 @@ class AiConfig(db.Model):
     template_text = db.Column(db.Text, nullable=False)
     use_openai = db.Column(db.Boolean, nullable=False)
 
-    created_at = db.Column(db.DateTime(), default=datetime.now(time_zone))
+    created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
     def __init__(self, company_id, template_name, template_text, use_openai):
         super().__init__()
