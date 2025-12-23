@@ -65,7 +65,7 @@ def process_dm(message, sender_id, company_id):
         else:
             have_phone_number = False
 
-    ai_response = get_ai_reply(message, company_id, have_full_name, have_phone_number)
+    ai_response = get_ai_reply(sender_id, message, company_id, have_full_name, have_phone_number)
 
     new_interaction_log = InteractionLog(company_id, sender_id, user_username, "DIRECT", message, ai_response)
     db.session.add(new_interaction_log)

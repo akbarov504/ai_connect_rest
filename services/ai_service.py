@@ -4,6 +4,7 @@ import sentry_sdk
 from models.company import Company
 from models.campaign import Campaign
 from models.ai_config import AiConfig
+from models.interaction_log import InteractionLog
 
 def detect_language(text):
     """
@@ -23,17 +24,17 @@ def detect_language(text):
         "how much", "price", "hello", "course", "please", "cost", "hi"
     ]
 
+    if any(k in text_low for k in en_keywords):
+        return "en"
     if any(k in text_low for k in ru_keywords):
         return "ru"
     if any(k in text_low for k in uz_keywords):
         return "uz"
-    if any(k in text_low for k in en_keywords):
-        return "en"
 
     # Default -> Uzbek
     return "uz"
 
-def get_ai_reply(text, company_id, have_full_name, have_phone_number):
+def get_ai_reply(sender_id, text, company_id, have_full_name, have_phone_number):
     sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = text - {text}, company_id - {company_id}")
     
     company = Company.query.filter_by(id=company_id).first()
@@ -56,46 +57,85 @@ def get_ai_reply(text, company_id, have_full_name, have_phone_number):
     user_lang = detect_language(text)
 
     if user_lang == "uz":
-        language_instruction = "Har doim faqat o'zbek tilida qisqa, professional javob qaytaring."
+        language_instruction = "Reply only in casual Uzbek (latin), friendly and natural."
     elif user_lang == "ru":
-        language_instruction = "Всегда отвечай кратко и профессионально только на русском языке."
+        language_instruction = "Reply only in friendly, spoken Russian."
     else:
-        language_instruction = "Always answer shortly and professionally in English."
+        language_instruction = "Reply only in casual, conversational English."
 
     system_prompt = f"""
-Siz kompaniyaning AI Assistantisiz.
+You are a real Instagram manager (22–28 years old).
+You chat like a normal human, not customer support.
 
-Kampaniya malumotlari:
+Campaign information:
 {campaign_texts}
 
-Sen uchun configuration - sen shunday ishlashing kerak, shu qoidalarga rioya qil va bular sening maqsading ham:
+Instructions:
 {ai_templates}
 
-Javob tili:
+Language rule:
 {language_instruction}
 
-Qoidalar:
-- {have_full_name} shu True bo'lsa Ismini soramagin agar False bo'lsa sora.
-- {have_phone_number} shu True bo'lsa Telefon raqamini soramagin agar False bo'lsa sora. 
-- Javobni faqat yuqoridagi kampaniya ma'lumotlari asosida bering.
-- Hech qachon mavzudan tashqari gap yozmagin.
-- Har doim professional, qisqa va aniq javob bering.
-- Agar savol kampaniyalarda bo'lmasa:
-  Uzbekcha: "Bu savol kompaniya materiallarida mavjud emas."
-  Ruscha:   "Этот вопрос отсутствует в материалах компании."
-  Inglizcha: "This question is not available in the company materials."
-"""
+Rules:
+- Answer ONLY using campaign information.
+- Be short, clear, human-like.
+- Professional but NOT formal.
+- Never repeat yourself.
+- Do not greet again if already greeted.
+- If question not in campaigns, respond with:
+  - uz: Bu savol kompaniya materiallarida mavjud emas.
+  - ru: Этот вопрос отсутствует в материалах компании.
+  - en: This question is not available in the company materials.
+- If full name exists ({have_full_name}) → do not ask.
+- If phone exists ({have_phone_number}) → do not ask.
+- If message is unclear or very short → ask follow-up.
+""" 
+    messages = [
+        {"role": "system", "content": system_prompt}
+    ]
+
+    interaction_log_list = InteractionLog.query.filter_by(company_id=company.id, user_instagram_id=sender_id).order_by(InteractionLog.created_at.desc()).limit(12).all()
+    for log in reversed(interaction_log_list):
+        messages.append({"role": "user", "content": log.message})
+        messages.append({"role": "assistant", "content": log.ai_response})
+
+    messages.append({"role": "user", "content": text})
+
+    if len(text.split()) <= 2:
+        messages.insert(1, {
+            "role": "system",
+            "content": "User message is very short. Ask a natural follow-up question."
+        })
 
     response = openai.chat.completions.create(
         model="gpt-4.1-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ]
+        temperature=0.85,
+        max_tokens=120,
+        presence_penalty=0.6,
+        frequency_penalty=0.7,
+        messages=messages
     )
 
-    sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = response - {response.choices[0].message.content}")
-    return response.choices[0].message.content
+    reply = response.choices[0].message.content
+    last_ai = [log.ai_response.lower().strip() for log in interaction_log_list[:3]]
+
+    if reply.lower().strip() in last_ai:
+        messages.insert(1, {
+            "role": "system",
+            "content": "Rewrite your answer in a completely different way."
+        })
+        response = openai.chat.completions.create(
+            model="gpt-4.1-mini",
+            temperature=1.0,
+            max_tokens=120,
+            presence_penalty=0.8,
+            frequency_penalty=0.8,
+            messages=messages
+        )
+        reply = response.choices[0].message.content
+        
+    sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = response - {reply}")
+    return reply
 
 def get_full_name(text, company_id):
     sentry_sdk.logger.warning(f"Instagram webhook post get_full_name = text - {text}, company_id - {company_id}")
