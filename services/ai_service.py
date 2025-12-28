@@ -41,15 +41,14 @@ def get_ai_reply(sender_id, text, company_id, have_full_name, have_phone_number)
     openai.api_key = company.openai_token
 
     campaigns = Campaign.query.filter_by(company_id=company.id, is_active=True).all()
-    campaign_texts = "\n\n".join([
-        f"--- {c.title} ---\n{c.content}"
+    campaign_texts = "\n".join([
+        f"- {c.title} - \n\n{c.content}"
         for c in campaigns
     ])
 
     ai_configs = AiConfig.query.filter_by(company_id=company.id).all()
-
-    ai_templates = "\n\n".join([
-        f"[{cfg.template_name}]\n{cfg.template_text}"
+    ai_templates = "\n".join([
+        f"- [{cfg.template_name}]: {cfg.template_text}"
         for cfg in ai_configs
         if cfg.use_openai is True
     ])
@@ -67,31 +66,11 @@ def get_ai_reply(sender_id, text, company_id, have_full_name, have_phone_number)
 You are a real Instagram manager (22–28 years old).
 You chat like a normal human, not a chatbot.
 
-Company info:
-- Name: My Zone Education
-- Since: 2019
-- Location: Tashkent, Chilonzor, near Mirzo Ulugbek metro
-- Phone: +998 91 191 44 11
-- Work time: 09:00–21:00
-- Work days: 5 days
+COMPANY DATA:
+{campaign_texts}
 
-Main course: Accounting (Buxgalteriya)
-
-Course types:
-ONLINE:
-- Duration: 2 months
-- Access: 1 year
-- Platform: My Zone Education platform
-- Price: 2,000,000 so’m total
-- Monthly: 1,000,000 so’m
-
-OFFLINE:
-- Duration: 2 months
-- Schedule: Monday–Friday
-- Monthly: 1,800,000 so’m
-- Total: 3,600,000 so’m
-- Includes: 1C, Excel, Soliq.uz, DIDOX, my.mehnat.uz, reports, HR, finance
-- End: Diploma + Certificate
+AI CONFIG:
+{ai_templates}
 
 CONVERSATION FLOW (VERY IMPORTANT):
 - NEVER give all information at once.
@@ -99,7 +78,8 @@ CONVERSATION FLOW (VERY IMPORTANT):
 - If the user asks generally (example: "online kurs bormi"):
   → confirm shortly and ask what exactly they want (price, duration, format).
 - Give information step by step like a real human.
-- After answering, you may ask ONE short follow-up question.
+- After answering, ask a follow-up question ONLY if it helps move the user closer to registration.
+- Otherwise, end the message without a question.
 - If the user asks for price, duration, or registration:
     → provide the info and THEN ask for name and phone (if not known yet).
 - If the user shows interest (asks about price, duration, registration) and you don't have their name or phone:
@@ -150,35 +130,36 @@ STRICT RULES:
     if len(text.split()) <= 2:
         messages.insert(1, {
             "role": "system",
-            "content": "User message is very short. Ask a natural follow-up question."
+            "content": "User message is very short. Reply briefly. Do NOT ask a question unless absolutely necessary."
         })
 
     response = openai.chat.completions.create(
         model="gpt-4.1-mini",
         temperature=0.6,
         max_tokens=80,
-        presence_penalty=0.6,
-        frequency_penalty=0.7,
+        presence_penalty=0.3,
+        frequency_penalty=0.5,
         messages=messages
     )
 
     reply = response.choices[0].message.content
-    last_ai = [log.ai_response.lower().strip() for log in interaction_log_list[:3]]
+    if len(interaction_log_list) > 3:
+        last_ai = [log.ai_response.lower().strip() for log in interaction_log_list[:3]]
 
-    if reply.lower().strip() in last_ai:
-        messages.insert(1, {
-            "role": "system",
-            "content": "Rewrite your answer in a completely different way."
-        })
-        response = openai.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0.6,
-            max_tokens=80,
-            presence_penalty=0.8,
-            frequency_penalty=0.8,
-            messages=messages
-        )
-        reply = response.choices[0].message.content
+        if reply.lower().strip() in last_ai:
+            messages.insert(1, {
+                "role": "system",
+                "content": "Rewrite your answer in a completely different way."
+            })
+            response = openai.chat.completions.create(
+                model="gpt-4.1-mini",
+                temperature=0.6,
+                max_tokens=80,
+                presence_penalty=0.7,
+                frequency_penalty=0.7,
+                messages=messages
+            )
+            reply = response.choices[0].message.content
         
     sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = response - {reply}")
     return reply

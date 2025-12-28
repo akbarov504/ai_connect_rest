@@ -3,6 +3,7 @@ from flask import Flask
 
 from models.user import User
 from models.company import Company
+from models.language import Language
 from models.campaign import Campaign
 from models.ai_config import AiConfig
 from models.company_lid import CompanyLid
@@ -20,6 +21,7 @@ from routes.auth_route import auth_bp
 from routes.user_route import user_bp
 from routes.main_route import main_bp
 from routes.company_route import company_bp
+from routes.language_route import language_bp
 from routes.campaign_route import campaign_bp
 from routes.ai_config_route import ai_config_bp
 from routes.instagram_route import instagram_bp
@@ -61,6 +63,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(user_bp)
 app.register_blueprint(main_bp)
 app.register_blueprint(company_bp)
+app.register_blueprint(language_bp)
 app.register_blueprint(campaign_bp)
 app.register_blueprint(ai_config_bp)
 app.register_blueprint(instagram_bp)
