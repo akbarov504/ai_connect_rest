@@ -30,6 +30,7 @@ def get_dm_username(sender_id, company_id):
 
     sentry_sdk.logger.warning(f"Instagram webhook post get_dm_username = sender_id - {sender_id}, company_id - {company_id}, token - {company.instagram_token}")
     result = requests.get(url).json()
+    print(result)
 
     sentry_sdk.logger.warning(f"Instagram webhook post get_dm_username = username - {result['username']}")
     return result["username"]
