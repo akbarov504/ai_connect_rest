@@ -57,8 +57,40 @@ Never switch language yourself.
 Always answer in the same language used in the user's last message.
 """ 
     messages = [
-        {"role": "system", "content": system_prompt}
-    ]
+    {"role": "system", "content": system_prompt},
+    {
+        "role": "system",
+        "content": f"""
+CRITICAL LANGUAGE RULE
+
+LAST USER MESSAGE:
+{text}
+
+IMPORTANT:
+
+Reply ONLY in the language of the LAST USER MESSAGE.
+
+If Russian:
+Use ONLY Russian vocabulary.
+
+If Uzbek:
+Use ONLY Uzbek Cyrillic.
+
+Do not mix languages.
+
+Determine language ONLY from the most recent user message.
+
+Ignore previous conversation language.
+
+Russian message -> Russian reply only.
+Uzbek message -> Uzbek Cyrillic reply only.
+
+Never mix languages.
+Never use Uzbek words in Russian conversations.
+Never use Russian words in Uzbek conversations.
+"""
+    }
+]
 
     interaction_log_list = InteractionLog.query.filter_by(company_id=company.id, user_instagram_id=sender_id).order_by(InteractionLog.created_at.desc()).limit(12).all()
     for log in reversed(interaction_log_list):
