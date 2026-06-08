@@ -6,34 +6,6 @@ from models.campaign import Campaign
 from models.ai_config import AiConfig
 from models.interaction_log import InteractionLog
 
-def detect_language(text):
-    """
-    Matndan tilni aniqlash: Uzbek, Russian yoki English.
-    """
-    text_low = text.lower()
-
-    uz_keywords = [
-        "qancha", "nech pul", "kurs", "narxi", "qayerda", "iltimos",
-        "uzbek", "o'z", "sizda", "qanday"
-    ]
-    ru_keywords = [
-        "сколько", "цена", "руб", "курс стоит", "пожалуйста", "сегодня",
-        "привет", "здравствуйте", "да", "нет"
-    ]
-    en_keywords = [
-        "how much", "price", "hello", "course", "please", "cost", "hi"
-    ]
-
-    if any(k in text_low for k in en_keywords):
-        return "en"
-    if any(k in text_low for k in ru_keywords):
-        return "ru"
-    if any(k in text_low for k in uz_keywords):
-        return "uz"
-
-    # Default -> Uzbek
-    return "uz"
-
 def get_ai_reply(sender_id, text, company_id, have_full_name, have_phone_number):
     sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = text - {text}, company_id - {company_id}")
     
@@ -53,15 +25,6 @@ def get_ai_reply(sender_id, text, company_id, have_full_name, have_phone_number)
         if cfg.use_openai is True
     ])
 
-    user_lang = detect_language(text)
-
-    if user_lang == "uz":
-        language_instruction = "Reply only in casual Uzbek (latin), friendly and natural."
-    elif user_lang == "ru":
-        language_instruction = "Reply only in friendly, spoken Russian."
-    else:
-        language_instruction = "Reply only in casual, conversational English."
-
     system_prompt = f"""
 You are a real Instagram manager (22–28 years old).
 You chat like a normal human, not a chatbot.
@@ -72,12 +35,26 @@ COMPANY DATA:
 AI CONFIG:
 {ai_templates}
 
-Language rule:
-{language_instruction}
-
 USER DATA:
 - Full name known: {have_full_name}
 - Phone number known: {have_phone_number}
+
+LANGUAGE DETECTION
+
+Detect the language from the user's LAST MESSAGE.
+
+If user writes Russian:
+Reply only in Russian.
+
+If user writes Uzbek Latin:
+Reply only in Uzbek Cyrillic.
+
+If user writes Uzbek Cyrillic:
+Reply only in Uzbek Cyrillic.
+
+Never switch language yourself.
+
+Always answer in the same language used in the user's last message.
 """ 
     messages = [
         {"role": "system", "content": system_prompt}
@@ -99,7 +76,7 @@ USER DATA:
     response = openai.chat.completions.create(
         model="gpt-4.1-mini",
         temperature=0.6,
-        max_tokens=80,
+        max_tokens=100,
         presence_penalty=0.3,
         frequency_penalty=0.5,
         messages=messages
@@ -117,7 +94,7 @@ USER DATA:
             response = openai.chat.completions.create(
                 model="gpt-4.1-mini",
                 temperature=0.6,
-                max_tokens=80,
+                max_tokens=100,
                 presence_penalty=0.7,
                 frequency_penalty=0.7,
                 messages=messages
