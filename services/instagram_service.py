@@ -46,11 +46,11 @@ def process_dm(message, sender_id, company_id, mid=None):
     )
 
     if mid:
-        already_processed = InteractionLog.query.filter_by(
+        already = InteractionLog.query.filter_by(
             company_id=company_id,
             message_id=mid
         ).first()
-        if already_processed:
+        if already:
             sentry_sdk.logger.warning(f"process_dm | DUPLICATE mid={mid} — skipped")
             return
 
@@ -92,17 +92,10 @@ def process_dm(message, sender_id, company_id, mid=None):
         have_full_name, have_phone_number
     )
 
-    new_log = InteractionLog(
-        company_id=company_id,
-        user_instagram_id=sender_id,
-        username=user_username,
-        source="DIRECT",
-        message=message,
-        ai_response=ai_response,
-        message_id=mid
-    )
+    new_log = InteractionLog(company_id, sender_id, user_username, "DIRECT", message, ai_response, mid)
     db.session.add(new_log)
     db.session.commit()
 
     sentry_sdk.logger.warning(f"process_dm | log_id={new_log.id} | reply={ai_response!r}")
+
     send_dm_reply.delay(sender_id, ai_response, company_id)
