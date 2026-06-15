@@ -18,10 +18,10 @@ class InstagramResource(Resource):
         token = request.args.get("hub.verify_token")
 
         if mode == "subscribe" and token == VERIFY_TOKEN:
-            sentry_sdk.logger.info(f"Instagram webhook verification successfully")
+            sentry_sdk.logger.info("Instagram webhook verification successfully")
             return Response(str(challenge), 200)
 
-        sentry_sdk.logger.warning(f"Instagram webhook verification failed")
+        sentry_sdk.logger.warning("Instagram webhook verification failed")
         return "Verification failed", 403
 
     def post(self):
@@ -30,22 +30,30 @@ class InstagramResource(Resource):
         try:
             entry = data["entry"][0]
             messaging = entry["messaging"][0]
+            message_obj = messaging["message"]
 
-            message = messaging["message"]['text']
-            sender_id = messaging["sender"]['id']
-
-            is_echo = messaging["message"].get("is_echo", None)
-            if is_echo:
+            if message_obj.get("is_echo"):
                 return {"status": "ok"}, 200
 
+            text = message_obj.get("text")
+            if not text:
+                return {"status": "ok"}, 200
+
+            mid = message_obj.get("mid")
+            sender_id = messaging["sender"]["id"]
             instagram_id = entry["id"]
+
             found_company = Company.query.filter_by(instagram_id=instagram_id).first()
             if not found_company:
-                sentry_sdk.logger.warning(f"Instagram webhook failed - Company not found")
+                sentry_sdk.logger.warning("Instagram webhook failed - Company not found")
                 return get_response("Company not found", None, 404), 404
 
-            sentry_sdk.logger.warning(f"Instagram webhook post = message - {message}, sender_id - {sender_id}, company_id - {found_company.id}")
-            process_dm.delay(message, sender_id, found_company.id)
+            sentry_sdk.logger.warning(
+                f"Instagram webhook post = message={text!r}, "
+                f"mid={mid}, sender_id={sender_id}, company_id={found_company.id}"
+            )
+
+            process_dm.delay(text, sender_id, found_company.id, mid)
             return {"status": "ok"}, 200
 
         except Exception as e:

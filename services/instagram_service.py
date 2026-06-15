@@ -1,5 +1,6 @@
+import os
+import requests
 import sentry_sdk
-import os, requests
 from models import db
 from celery import shared_task
 from models.company import Company
@@ -14,63 +15,94 @@ def send_dm_reply(sender_id, message, company_id):
     company = Company.query.filter_by(id=company_id).first()
     url = f"{URL}/me/messages?access_token={company.instagram_token}"
 
-    sentry_sdk.logger.warning(f"Instagram webhook post send_dm_reply = sender_id - {sender_id}, company_id - {company_id}, message - {message}")
+    sentry_sdk.logger.warning(
+        f"send_dm_reply | sender_id={sender_id} | company_id={company_id} | message={message!r}"
+    )
+
     payload = {
         "recipient": {"id": sender_id},
         "messaging_type": "RESPONSE",
         "message": {"text": message},
     }
-
     requests.post(url, json=payload)
-    sentry_sdk.logger.warning(f"Instagram webhook post send_dm_reply successfully sended")
+    sentry_sdk.logger.warning("send_dm_reply | sent successfully")
 
 def get_dm_username(sender_id, company_id):
     company = Company.query.filter_by(id=company_id).first()
     url = f"{URL}/{sender_id}?fields=username&access_token={company.instagram_token}"
 
-    sentry_sdk.logger.warning(f"Instagram webhook post get_dm_username = sender_id - {sender_id}, company_id - {company_id}, token - {company.instagram_token}")
+    sentry_sdk.logger.warning(
+        f"get_dm_username | sender_id={sender_id} | company_id={company_id}"
+    )
     result = requests.get(url).json()
-    print(result)
-
-    sentry_sdk.logger.warning(f"Instagram webhook post get_dm_username = username - {result['username']}")
-    return result["username"]
+    username = result.get("username", sender_id)
+    sentry_sdk.logger.warning(f"get_dm_username | username={username!r}")
+    return username
 
 @shared_task(name="services.instagram_service.process_dm")
-def process_dm(message, sender_id, company_id):
-    print(message)
-    user_username = get_dm_username(sender_id, company_id)
+def process_dm(message, sender_id, company_id, mid=None):
+    sentry_sdk.logger.warning(
+        f"process_dm | sender_id={sender_id} | company_id={company_id} | mid={mid} | message={message!r}"
+    )
 
-    found_company_lid = CompanyLid.query.filter_by(company_id=company_id, user_instagram_id=sender_id, username=user_username).first()
+    if mid:
+        already_processed = InteractionLog.query.filter_by(
+            company_id=company_id,
+            message_id=mid
+        ).first()
+        if already_processed:
+            sentry_sdk.logger.warning(f"process_dm | DUPLICATE mid={mid} — skipped")
+            return
+
+    user_username = get_dm_username(sender_id, company_id)
+    found_company_lid = CompanyLid.query.filter_by(
+        company_id=company_id,
+        user_instagram_id=sender_id
+    ).first()
+
     if not found_company_lid:
         found_company_lid = CompanyLid(company_id, sender_id, user_username, "NEW")
         db.session.add(found_company_lid)
+        db.session.flush()
 
-    have_full_name = False
-    have_phone_number = False
+    if found_company_lid.username != user_username:
+        found_company_lid.username = user_username
 
-    if found_company_lid.full_name is None:
-        send_full_name = get_full_name(message, company_id)
-        print(send_full_name)
-        if send_full_name != "no":
+    have_full_name = found_company_lid.full_name is not None
+    have_phone_number = found_company_lid.phone_number is not None
+
+    if not have_full_name:
+        extracted_name = get_full_name(message, company_id)
+        if extracted_name != "no":
+            found_company_lid.full_name = extracted_name
             have_full_name = True
-            found_company_lid.full_name = send_full_name
-        else:
-            have_full_name = False
-    
-    if found_company_lid.phone_number is None:
-        send_phone_number = get_phone_number(message, company_id)
-        print(send_phone_number)
-        if send_phone_number != "no":
+            if found_company_lid.phone_number:
+                found_company_lid.status = "NEW"
+
+    if not have_phone_number:
+        extracted_phone = get_phone_number(message, company_id)
+        if extracted_phone != "no":
+            found_company_lid.phone_number = extracted_phone
             have_phone_number = True
-            found_company_lid.phone_number = send_phone_number
-        else:
-            have_phone_number = False
+            if found_company_lid.full_name:
+                found_company_lid.status = "NEW"
 
-    ai_response = get_ai_reply(sender_id, message, company_id, have_full_name, have_phone_number)
+    ai_response = get_ai_reply(
+        sender_id, message, company_id,
+        have_full_name, have_phone_number
+    )
 
-    new_interaction_log = InteractionLog(company_id, sender_id, user_username, "DIRECT", message, ai_response)
-    db.session.add(new_interaction_log)
+    new_log = InteractionLog(
+        company_id=company_id,
+        user_instagram_id=sender_id,
+        username=user_username,
+        source="DIRECT",
+        message=message,
+        ai_response=ai_response,
+        message_id=mid
+    )
+    db.session.add(new_log)
     db.session.commit()
 
-    sentry_sdk.logger.warning(f"Instagram webhook post process_dm - {new_interaction_log.id}")
+    sentry_sdk.logger.warning(f"process_dm | log_id={new_log.id} | reply={ai_response!r}")
     send_dm_reply.delay(sender_id, ai_response, company_id)
