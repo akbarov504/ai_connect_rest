@@ -6,212 +6,283 @@ from models.campaign import Campaign
 from models.ai_config import AiConfig
 from models.interaction_log import InteractionLog
 
+def _call_gpt(api_key: str, messages: list, temperature=0.5,
+              max_tokens=120, presence_penalty=0.3, frequency_penalty=0.5,
+              response_format=None):
+    openai.api_key = api_key
+    kwargs = dict(
+        model="gpt-4.1-mini",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        messages=messages,
+    )
+    if response_format:
+        kwargs["response_format"] = response_format
+    return openai.chat.completions.create(**kwargs)
+
+def _lead_status(have_full_name: bool, have_phone_number: bool) -> str:
+    if have_full_name and have_phone_number:
+        return (
+            "LEAD IS COMPLETE. Name and phone number are already saved. "
+            "Do NOT ask for them again under any circumstances. "
+            "If the customer has no new question, end the conversation warmly."
+        )
+    if have_full_name:
+        return (
+            "Customer name is already known. "
+            "Ask for phone number at the right moment — not immediately."
+        )
+    if have_phone_number:
+        return (
+            "Phone number is already saved. "
+            "Ask for the customer's name at the right moment — not immediately."
+        )
+    return (
+        "Name and phone number are not yet collected. "
+        "Collect them AFTER giving a price estimate. "
+        "Do not ask for them before price discussion."
+    )
+
 def get_ai_reply(sender_id, text, company_id, have_full_name, have_phone_number):
-    sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = text - {text}, company_id - {company_id}")
-    
+    sentry_sdk.logger.warning(
+        f"get_ai_reply | text={text!r} | company_id={company_id}"
+    )
+
     company = Company.query.filter_by(id=company_id).first()
-    openai.api_key = company.openai_token
 
     campaigns = Campaign.query.filter_by(company_id=company.id, is_active=True).all()
-    campaign_texts = "\n".join([
-        f"- {c.title} - \n\n{c.content}"
-        for c in campaigns
-    ])
+    campaign_block = "\n\n".join(
+        f"[{c.title}]\n{c.content}" for c in campaigns
+    )
 
     ai_configs = AiConfig.query.filter_by(company_id=company.id).all()
-    ai_templates = "\n".join([
-        f"- [{cfg.template_name}]: {cfg.template_text}"
-        for cfg in ai_configs
-        if cfg.use_openai is True
-    ])
+    config_block = "\n\n".join(
+        f"[{cfg.template_name}]\n{cfg.template_text}"
+        for cfg in ai_configs if cfg.use_openai
+    )
 
-    system_prompt = f"""
-You are a real Instagram manager (22–28 years old).
-You chat like a normal human, not a chatbot.
+    lead_block = _lead_status(have_full_name, have_phone_number)
 
-COMPANY DATA:
-{campaign_texts}
+    system_prompt = f"""You are a real sales manager at Clima.uz.
+You are 25 years old, friendly, sharp, and fully human in tone.
+You work on Instagram DM and your only job is to help the customer and collect their contact.
 
-AI CONFIG:
-{ai_templates}
+━━━━━━━━━━━━━━━━━━━━━━
+LANGUAGE — TOP PRIORITY
+━━━━━━━━━━━━━━━━━━━━━━
 
-USER DATA:
-- Full name known: {have_full_name}
-- Phone number known: {have_phone_number}
+Rule 1 — Detect language from the LAST user message only. Ignore all previous messages.
+Rule 2 — If last message is Russian → reply ONLY in Russian. Translate everything.
+Rule 3 — If last message is Uzbek (Latin or Cyrillic) → reply ONLY in Uzbek Cyrillic.
+Rule 4 — Never mix languages. One reply = one language.
+Rule 5 — Before sending, check every word. If one wrong-language word is found → rewrite.
 
-LANGUAGE DETECTION
+BANNED in Russian replies (will break the rule):
+майдон, баландлик, лойиҳа, шаҳар, исм, рақам, неча, қанча, уй, хона, боғланади, мутахассис
 
-Detect the language from the user's LAST MESSAGE.
+BANNED in Uzbek replies (will break the rule):
+площадь, высота, проект, город, имя, номер, сколько, дом, свяжется, специалист
 
-If user writes Russian:
-Reply only in Russian.
+━━━━━━━━━━━━━━━━━━━━━━
+COMPANY INFO (Campaign)
+━━━━━━━━━━━━━━━━━━━━━━
 
-If user writes Uzbek Latin:
-Reply only in Uzbek Cyrillic.
+{campaign_block}
 
-If user writes Uzbek Cyrillic:
-Reply only in Uzbek Cyrillic.
+━━━━━━━━━━━━━━━━━━━━━━
+SALES RULES (AI Config)
+━━━━━━━━━━━━━━━━━━━━━━
 
-Never switch language yourself.
+{config_block}
 
-Always answer in the same language used in the user's last message.
-""" 
-    messages = [
-    {"role": "system", "content": system_prompt},
-    {
-        "role": "system",
-        "content": f"""
-CRITICAL LANGUAGE RULE
+━━━━━━━━━━━━━━━━━━━━━━
+LEAD STATUS
+━━━━━━━━━━━━━━━━━━━━━━
 
-LAST USER MESSAGE:
-{text}
+{lead_block}
 
-IMPORTANT:
+━━━━━━━━━━━━━━━━━━━━━━
+CONTEXT & MEMORY RULES
+━━━━━━━━━━━━━━━━━━━━━━
 
-Reply ONLY in the language of the LAST USER MESSAGE.
+- Read the FULL conversation before replying.
+- If the customer already gave their phone number earlier → do NOT ask again. Confirm and close.
+- If the customer already gave their name earlier → do NOT ask again.
+- If the customer sends digits (e.g. "998901234567" or "90-123-45-67") → treat it as phone number.
+- If the customer says "I already sent it" / "already wrote it" → apologize briefly and confirm receipt.
+- Never repeat a question the customer already answered.
 
-If Russian:
-Use ONLY Russian vocabulary.
+━━━━━━━━━━━━━━━━━━━━━━
+OPERATOR HANDOFF RULES
+━━━━━━━━━━━━━━━━━━━━━━
 
-If Uzbek:
-Use ONLY Uzbek Cyrillic.
+- Sometimes a human operator also replies in this conversation.
+- Read all messages before responding. If the human operator already answered a question → do NOT repeat it.
+- If you see that contact info was already collected by the operator → treat lead as complete.
+- Blend in seamlessly. The customer must never notice a switch between bot and operator.
+- If the topic has already moved forward, continue from where it left off.
 
-Do not mix languages.
+━━━━━━━━━━━━━━━━━━━━━━
+SMART REPLY RULES
+━━━━━━━━━━━━━━━━━━━━━━
 
-Determine language ONLY from the most recent user message.
+- Customer says "send me your number" / "how do I contact you" → give: +998874445454
+- Customer says "send to Telegram / WhatsApp" → reply: "Xabarni shu raqamga yuboring: +998874445454" (translate to their language)
+- Customer says "I sent it in Telegram" → reply: "Yaxshi, mutaxassisimiz siz bilan bog'lanadi." (translate)
+- Customer seems unsure after price → do NOT end. Offer alternatives: "Boshqa variantlarni ham ko'rib chiqamiz."
+- Customer says "expensive" → do NOT give up. Say we have options. Ask for contact.
+- Customer says "I'll think about it" → acknowledge and still ask for contact softly.
+- Customer complains about no callback → apologize first, then promise action. Never say "wait patiently."
+- Never say: "Бизда Telegram йўқ" / "У нас нет WhatsApp" / "Кутиб туринг" / "Сабр қилинг"
 
-Ignore previous conversation language.
+━━━━━━━━━━━━━━━━━━━━━━
+RESPONSE FORMAT
+━━━━━━━━━━━━━━━━━━━━━━
 
-Russian message -> Russian reply only.
-Uzbek message -> Uzbek Cyrillic reply only.
-
-Never mix languages.
-Never use Uzbek words in Russian conversations.
-Never use Russian words in Uzbek conversations.
+- Maximum 2 sentences per reply.
+- Maximum ~80 characters total.
+- One question per message max.
+- No paragraphs. No long explanations.
+- Do not start mid-conversation with "Ассалому алайкум" or "Здравствуйте" again.
+- No filler words: "Конечно!", "Разумеется!", "Албатта!" — unless it sounds completely natural.
+- Tone: warm, direct, confident — like a real colleague, not a robot.
 """
-    }
-]
 
-    interaction_log_list = InteractionLog.query.filter_by(company_id=company.id, user_instagram_id=sender_id).order_by(InteractionLog.created_at.desc()).limit(12).all()
-    for log in reversed(interaction_log_list):
-        messages.append({"role": "user", "content": log.message})
+    logs = (
+        InteractionLog.query
+        .filter_by(company_id=company.id, user_instagram_id=sender_id)
+        .order_by(InteractionLog.created_at.desc())
+        .limit(14)
+        .all()
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+
+    for log in reversed(logs):
+        messages.append({"role": "user",      "content": log.message})
         messages.append({"role": "assistant", "content": log.ai_response})
 
     messages.append({"role": "user", "content": text})
 
-    if len(text.split()) <= 2:
+    if len(text.strip().split()) <= 2:
         messages.insert(1, {
             "role": "system",
-            "content": "User message is very short. Reply briefly. Do NOT ask a question unless absolutely necessary."
+            "content": (
+                "The user's message is very short (1–2 words). "
+                "Reply briefly and naturally. "
+                "Ask a question ONLY if it is the clear next step in the sales flow."
+            )
         })
 
-    response = openai.chat.completions.create(
-        model="gpt-4.1-mini",
-        temperature=0.6,
-        max_tokens=100,
+    response = _call_gpt(
+        api_key=company.openai_token,
+        messages=messages,
+        temperature=0.5,
+        max_tokens=120,
         presence_penalty=0.3,
         frequency_penalty=0.5,
-        messages=messages
     )
+    reply = response.choices[0].message.content.strip()
 
-    reply = response.choices[0].message.content
-    if len(interaction_log_list) > 3:
-        last_ai = [log.ai_response.lower().strip() for log in interaction_log_list[:3]]
-
-        if reply.lower().strip() in last_ai:
+    if len(logs) >= 3:
+        last_replies = [log.ai_response.lower().strip() for log in logs[:3]]
+        if reply.lower().strip() in last_replies:
             messages.insert(1, {
                 "role": "system",
-                "content": "Rewrite your answer in a completely different way."
+                "content": (
+                    "Your last replies were repetitive. "
+                    "This time rewrite completely: different structure, different words, same meaning."
+                )
             })
-            response = openai.chat.completions.create(
-                model="gpt-4.1-mini",
-                temperature=0.6,
-                max_tokens=100,
+            response = _call_gpt(
+                api_key=company.openai_token,
+                messages=messages,
+                temperature=0.75,
+                max_tokens=120,
                 presence_penalty=0.7,
                 frequency_penalty=0.7,
-                messages=messages
             )
-            reply = response.choices[0].message.content
-        
-    sentry_sdk.logger.warning(f"Instagram webhook post get_ai_reply = response - {reply}")
+            reply = response.choices[0].message.content.strip()
+
+    sentry_sdk.logger.warning(f"get_ai_reply | reply={reply!r}")
     return reply
 
 def get_full_name(text, company_id):
-    sentry_sdk.logger.warning(f"Instagram webhook post get_full_name = text - {text}, company_id - {company_id}")
-    
+    sentry_sdk.logger.warning(f"get_full_name | text={text!r} | company_id={company_id}")
+
     company = Company.query.filter_by(id=company_id).first()
-    openai.api_key = company.openai_token
 
-    system_prompt = """
-Sen faqat JSON qaytaradigan analizchisiz.
-Text ichidan ism yoki ism-familyani aniqlaysan.
-Agar ism yoki ism-familya bo‘lsa — faqat shu nomni qaytarasan.
-Agar yo‘q bo‘lsa — name maydoni null bo‘lsin.
-Hech qachon izoh, tushuntirish yoki boshqa gap yozma.
-"""
+    system_prompt = (
+        "You are a JSON-only extractor. "
+        "Extract a person's name or full name from the text. "
+        "If found, return it as-is. If not found, return null. "
+        "No explanation. No extra text. JSON only."
+    )
 
-    response = openai.chat.completions.create(
-        model="gpt-4.1-mini",
+    response = _call_gpt(
+        api_key=company.openai_token,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": text},
+        ],
+        temperature=0.0,
+        max_tokens=50,
         response_format={
             "type": "json_schema",
             "json_schema": {
                 "name": "name_extractor",
                 "schema": {
                     "type": "object",
-                    "properties": {
-                        "name": {"type": ["string", "null"]}
-                    },
-                    "required": ["name"]
-                }
-            }
+                    "properties": {"name": {"type": ["string", "null"]}},
+                    "required": ["name"],
+                },
+            },
         },
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ]
     )
-    raw_json = response.choices[0].message.content
-    data = json.loads(raw_json)
 
-    sentry_sdk.logger.warning(f"Instagram webhook post get_full_name = response - {str(data)}")
-    return data["name"] if data["name"] else "no"
+    data = json.loads(response.choices[0].message.content)
+    result = data.get("name") or "no"
+    sentry_sdk.logger.warning(f"get_full_name | result={result!r}")
+    return result
 
 def get_phone_number(text, company_id):
-    sentry_sdk.logger.warning(f"Instagram webhook post get_phone_number = text - {text}, company_id - {company_id}")
-    
+    sentry_sdk.logger.warning(f"get_phone_number | text={text!r} | company_id={company_id}")
+
     company = Company.query.filter_by(id=company_id).first()
-    openai.api_key = company.openai_token
 
-    system_prompt = """
-Sen faqat JSON qaytaradigan analizchisiz.
-Text ichidan telefon raqamni aniqlaysan.
-Agar telefon raqam bo‘lsa — faqat raqamni qaytar.
-Agar yo‘q bo‘lsa — phone maydoni null bo‘lsin.
-Qo‘shimcha gap yozma.
-"""
+    system_prompt = (
+        "You are a JSON-only extractor. "
+        "Extract a phone number from the text. "
+        "Accept any format: with spaces, dashes, plus sign, or plain digits. "
+        "Return digits only (no spaces, dashes, or symbols). "
+        "If no phone number found, return null. "
+        "No explanation. No extra text. JSON only."
+    )
 
-    response = openai.chat.completions.create(
-        model="gpt-4.1-mini",
+    response = _call_gpt(
+        api_key=company.openai_token,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": text},
+        ],
+        temperature=0.0,
+        max_tokens=50,
         response_format={
             "type": "json_schema",
             "json_schema": {
                 "name": "phone_extractor",
                 "schema": {
                     "type": "object",
-                    "properties": {
-                        "phone": {"type": ["string", "null"]}
-                    },
-                    "required": ["phone"]
-                }
-            }
+                    "properties": {"phone": {"type": ["string", "null"]}},
+                    "required": ["phone"],
+                },
+            },
         },
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ]
     )
-    raw_json = response.choices[0].message.content
-    data = json.loads(raw_json)
-    
-    sentry_sdk.logger.warning(f"Instagram webhook post get_phone_number = response - {str(data)}")
-    return data["phone"] if data["phone"] else "no"
+
+    data = json.loads(response.choices[0].message.content)
+    result = data.get("phone") or "no"
+    sentry_sdk.logger.warning(f"get_phone_number | result={result!r}")
+    return result
