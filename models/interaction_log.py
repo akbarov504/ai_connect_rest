@@ -15,10 +15,11 @@ class InteractionLog(db.Model):
     interaction_type = db.Column(db.String(50), nullable=False)
     message = db.Column(db.Text, nullable=False)
     ai_response = db.Column(db.Text, nullable=False)
+    message_id = db.Column(db.String(100), nullable=True, unique=True)
 
     created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
-    def __init__(self, company_id, user_instagram_id, username, interaction_type, message, ai_response):
+    def __init__(self, company_id, user_instagram_id, username, interaction_type, message, ai_response, message_id=None):
         super().__init__()
         self.company_id = company_id
         self.user_instagram_id = user_instagram_id
@@ -26,6 +27,7 @@ class InteractionLog(db.Model):
         self.interaction_type = interaction_type
         self.message = message
         self.ai_response = ai_response
+        self.message_id = message_id
 
     def __repr__(self):
         return f"<InteractionLog {self.username}>"
@@ -39,5 +41,6 @@ class InteractionLog(db.Model):
             "interaction_type": self.interaction_type,
             "message": self.message,
             "ai_response": self.ai_response,
+            "message_id": self.message_id,
             "created_at": self.created_at.isoformat()
         }
