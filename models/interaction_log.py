@@ -15,7 +15,7 @@ class InteractionLog(db.Model):
     interaction_type = db.Column(db.String(50), nullable=False)
     message = db.Column(db.Text, nullable=False)
     ai_response = db.Column(db.Text, nullable=False)
-    message_id = db.Column(db.String(100), nullable=True, unique=True)
+    message_id = db.Column(db.Text, nullable=True, unique=True)
 
     created_at = db.Column(db.DateTime(), default=lambda: datetime.now(time_zone))
 
